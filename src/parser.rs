@@ -173,4 +173,20 @@ mod tests {
             ]
         );
     }
+
+    #[test]
+    fn parses_general_sibling_combinator_in_stylesheet() {
+        let rules = parse_stylesheet(".a ~ .b { color: green; }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].selectors[0],
+            vec![
+                descendant(vec![SimplePart::Class("a".to_string())]),
+                SelectorSegment {
+                    combinator: Combinator::GeneralSibling,
+                    compound: vec![SimplePart::Class("b".to_string())],
+                },
+            ]
+        );
+    }
 }

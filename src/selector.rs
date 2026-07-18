@@ -1,18 +1,27 @@
 //! セレクタとその優先度(specificity)計算。単純セレクタの組み合わせ
 //! (`div.foo#bar`のようなタグ名/クラス/IDの組み合わせ)に加え、
 //! **子孫結合子(スペース区切り、例: `div p`)・子結合子(`>`)・
-//! 隣接兄弟結合子(`+`)**を対応する(2026-07-18追加)。一般兄弟結合子
-//! (`~`)は次段階の課題として明記。
+//! 隣接兄弟結合子(`+`)・一般兄弟結合子(`~`)**を対応する
+//! (`~`は2026-07-19追加)。
 //!
-//! **隣接兄弟結合子(`+`)のスコープの限界(正直な開示)**: `matches_selector`
-//! は呼び出し側から`el`自身の直前の兄弟列(`preceding_siblings`)しか
-//! 受け取らない設計のため、`+`がセレクタの**最も右側の結合**
-//! (例: `li + li`の`+`)である場合のみ正しく判定できる。`div + p span`の
-//! ように`+`がそれより左側(祖先チェーン側)に現れる場合、祖先の兄弟情報が
-//! そもそも呼び出し側から渡されないため判定不能——安全側に倒して常に
-//! 不一致(`false`)を返す(黙って誤判定するより、明示的に「未対応」を
-//! 選ぶ)。深い位置での兄弟結合子対応が必要になった場合は、`ancestors`を
+//! **隣接兄弟結合子(`+`)・一般兄弟結合子(`~`)共通のスコープの限界
+//! (正直な開示)**: `matches_selector`は呼び出し側から`el`自身の直前の
+//! 兄弟列(`preceding_siblings`)しか受け取らない設計のため、`+`/`~`が
+//! セレクタの**最も右側の結合**(例: `li + li`・`li ~ li`)である場合のみ
+//! 正しく判定できる。`div + p span`・`div ~ p span`のように`+`/`~`が
+//! それより左側(祖先チェーン側)に現れる場合、祖先の兄弟情報がそもそも
+//! 呼び出し側から渡されないため判定不能——安全側に倒して常に不一致
+//! (`false`)を返す(黙って誤判定するより、明示的に「未対応」を選ぶ)。
+//! 深い位置での兄弟結合子対応が必要になった場合は、`ancestors`を
 //! フラットな配列ではなくDOM木参照に置き換える設計変更が必要。
+//!
+//! 一般兄弟結合子(`~`)自体の判定ロジックは、隣接兄弟結合子(`+`)より
+//! むしろ単純: `+`は「直前の兄弟(1つだけ)」を見るのに対し、`~`は
+//! `preceding_siblings`(target要素の直前の兄弟から順に並んだ配列)を
+//! 全件スキャンし、いずれか1つでも一致すれば真——直前かどうかの位置は
+//! 問わない。ただし上記の通り、この判定に使える`preceding_siblings`は
+//! target要素自身のものしか渡されないため、チェーンの深い位置での`~`は
+//! `+`と同様にスコープ外のまま。
 
 /// コンパウンドセレクタを構成する単純セレクタの一部品。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +137,9 @@ pub enum Combinator {
     Child,
     /// `+`(例: `li + li`)。直前の兄弟でなければならない。
     AdjacentSibling,
+    /// `~`(例: `li ~ li`)。それより前の兄弟のいずれかでよい
+    /// (直前である必要はない)。
+    GeneralSibling,
 }
 
 /// 結合子付きの1コンパウンドセレクタ。
@@ -145,13 +157,13 @@ pub struct SelectorSegment {
 pub type Selector = Vec<SelectorSegment>;
 
 /// カンマを含まない1つのセレクタ文字列(空白区切りの子孫結合子・
-/// `>`/`+`結合子を含む場合がある。スペース有無どちらの表記
-/// (`div > p`/`div>p`)にも対応するため、`>`/`+`の前後に強制的に
+/// `>`/`+`/`~`結合子を含む場合がある。スペース有無どちらの表記
+/// (`div > p`/`div>p`)にも対応するため、`>`/`+`/`~`の前後に強制的に
 /// 空白を挿入してからトークナイズする)。
 pub fn parse_selector(input: &str) -> Option<Selector> {
     let spaced: String = input
         .chars()
-        .flat_map(|c| if c == '>' || c == '+' { vec![' ', c, ' '] } else { vec![c] })
+        .flat_map(|c| if c == '>' || c == '+' || c == '~' { vec![' ', c, ' '] } else { vec![c] })
         .collect();
 
     let mut segments = Vec::new();
@@ -160,6 +172,7 @@ pub fn parse_selector(input: &str) -> Option<Selector> {
         match token {
             ">" => pending = Combinator::Child,
             "+" => pending = Combinator::AdjacentSibling,
+            "~" => pending = Combinator::GeneralSibling,
             _ => {
                 let compound = parse_compound_selector(token)?;
                 segments.push(SelectorSegment { combinator: pending, compound });
@@ -190,9 +203,9 @@ pub fn selector_specificity(selector: &Selector) -> (u32, u32, u32) {
 /// - `ancestors`: 直近の親から順にルートに向かう祖先の並び
 ///   (`ancestors[0]`が親)。子孫結合子・子結合子の判定に使う。
 /// - `preceding_siblings`: `el`の直前の兄弟から順に並べたもの
-///   (`preceding_siblings[0]`が直前の兄弟)。隣接兄弟結合子の判定に使う。
-///   祖先チェーンの深い位置での`+`はスコープ外(モジュール冒頭コメント
-///   参照)——安全側に倒して不一致を返す。
+///   (`preceding_siblings[0]`が直前の兄弟)。隣接兄弟結合子・一般兄弟
+///   結合子の判定に使う。祖先チェーンの深い位置での`+`/`~`はスコープ外
+///   (モジュール冒頭コメント参照)——安全側に倒して不一致を返す。
 pub fn matches_selector<E: ElementLike + ?Sized>(
     selector: &Selector,
     el: &E,
@@ -212,8 +225,9 @@ pub fn matches_selector<E: ElementLike + ?Sized>(
     // 「1つ左隣の segment」とどう関係するかを表す
     // (= その左隣 segment 自身が持つ`combinator`フィールドの値)。
     let mut next_relation = target.combinator;
-    // `+`はtarget自身から見た直前の兄弟でしか判定できない(スコープ限界、
-    // モジュール冒頭コメント参照)——ループ1周目だけ`true`。
+    // `+`/`~`はtarget自身から見た兄弟列(`preceding_siblings`)でしか
+    // 判定できない(スコープ限界、モジュール冒頭コメント参照)——
+    // ループ1周目だけ`true`。
     let mut at_target_position = true;
 
     while let Some((needle, rest2)) = remaining.split_last() {
@@ -239,6 +253,14 @@ pub fn matches_selector<E: ElementLike + ?Sized>(
                 match preceding_siblings.first() {
                     Some(sib) if matches(&needle.compound, *sib) => {}
                     _ => return false,
+                }
+            }
+            Combinator::GeneralSibling => {
+                if !at_target_position {
+                    return false;
+                }
+                if !preceding_siblings.iter().any(|sib| matches(&needle.compound, *sib)) {
+                    return false;
                 }
             }
         }
@@ -412,6 +434,53 @@ mod tests {
         let ancestor = FakeElement { tag: "p", classes: vec![], id: None };
         let target = FakeElement { tag: "span", classes: vec![], id: None };
         let selector = parse_selector("div + p span").unwrap();
+        assert!(!matches_selector(&selector, &target, &[&ancestor], &[]));
+    }
+
+    #[test]
+    fn parses_general_sibling_combinator_with_or_without_spaces() {
+        let expected = vec![
+            SelectorSegment { combinator: Combinator::Descendant, compound: vec![SimplePart::Class("a".to_string())] },
+            SelectorSegment { combinator: Combinator::GeneralSibling, compound: vec![SimplePart::Class("b".to_string())] },
+        ];
+        assert_eq!(parse_selector(".a ~ .b"), Some(expected.clone()));
+        assert_eq!(parse_selector(".a~.b"), Some(expected));
+    }
+
+    #[test]
+    fn general_sibling_combinator_matches_any_earlier_sibling_not_just_adjacent() {
+        // "li ~ li" は、直前の兄弟でなくても、それより前に一致する兄弟が
+        // あれば真(`+`との違い)。preceding_siblings[0]が直前の兄弟。
+        let first_li = FakeElement { tag: "li", classes: vec![], id: None };
+        let span_between = FakeElement { tag: "span", classes: vec![], id: None };
+        let target = FakeElement { tag: "li", classes: vec![], id: None };
+        let selector = parse_selector("li ~ li").unwrap();
+
+        // 直前の兄弟(span_between)は一致しないが、その前(first_li)が
+        // 一致するので全体としては真。
+        assert!(matches_selector(&selector, &target, &[], &[&span_between, &first_li]));
+    }
+
+    #[test]
+    fn general_sibling_combinator_rejects_when_no_preceding_sibling_matches() {
+        let span_sibling = FakeElement { tag: "span", classes: vec![], id: None };
+        let target = FakeElement { tag: "li", classes: vec![], id: None };
+        let selector = parse_selector("li ~ li").unwrap();
+
+        // 兄弟が無ければ不一致。
+        assert!(!matches_selector(&selector, &target, &[], &[]));
+        // 前の兄弟がいずれもタグ違いなら不一致。
+        assert!(!matches_selector(&selector, &target, &[], &[&span_sibling]));
+    }
+
+    #[test]
+    fn general_sibling_combinator_deeper_in_chain_is_out_of_scope_and_fails_safe() {
+        // "div ~ p span" のように `~` が最も右側の結合ではない場合は、
+        // `+`と同じ理由(祖先の兄弟情報が渡されない)で判定不能——
+        // 安全側に倒して常に不一致を返す(モジュール冒頭コメント参照)。
+        let ancestor = FakeElement { tag: "p", classes: vec![], id: None };
+        let target = FakeElement { tag: "span", classes: vec![], id: None };
+        let selector = parse_selector("div ~ p span").unwrap();
         assert!(!matches_selector(&selector, &target, &[&ancestor], &[]));
     }
 }

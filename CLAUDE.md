@@ -45,22 +45,34 @@
   可能(例: `li + li`)。`div + p span`のように`+`がそれより左側
   (祖先チェーン側)に現れる場合、祖先の兄弟情報がそもそも呼び出し側
   から渡されないため判定不能——安全側に倒して常に不一致を返す
-  (`selector.rs`冒頭コメント参照)。一般兄弟結合子(`~`)は未対応のまま。
-- **未対応(次段階)**: 一般兄弟結合子(`~`)、`@media`等のat-rule、
-  `!important`、カスケードレイヤー(`@layer`)、CSS変数、
-  レイアウト計算(flexbox/grid)、深い位置での`+`結合子(上記参照)。
-- **検証**: `cargo test`で27件全green(既存20件+子/隣接兄弟結合子の
-  パース2件・マッチング4件・スコープ限界の安全策1件)。警告0件。
-  依存先の`RBootStrap`(22件)・`RReact`(`dom_bridge`フィーチャ有効時
-  16件、無効時10件)もこの変更に追従して全green確認済み。
+  (`selector.rs`冒頭コメント参照)。
+- **2026-07-19追記: 一般兄弟結合子(`~`)対応完了**。`Combinator`に
+  `GeneralSibling`を追加、`parse_selector`は`~`の前後にスペースが
+  無い表記(`.a~.b`)にも対応。マッチングは`+`と違い
+  `preceding_siblings`を1件目だけでなく全件スキャンし、いずれか一致
+  すれば真(直前である必要はない——CSS仕様通り)。
+  **正直なスコープの限界(`+`と共通)**: `matches_selector`が受け取る
+  `preceding_siblings`はtarget要素自身のものだけなので、`~`もセレクタ
+  最右の結合でのみ判定可能。`div ~ p span`のように左側(祖先チェーン側)
+  に現れる場合は`+`と同じ理由で判定不能——安全側に倒して不一致を返す
+  (`selector.rs`冒頭コメント参照)。依存クレート`RReact`/`RBootStrap`は
+  `Combinator`を網羅的にmatchしていない(構築のみ)ため、変更不要
+  ・両クレートとも無変更でビルド/テスト green を確認済み。
+- **未対応(次段階)**: `@media`等のat-rule、`!important`、
+  カスケードレイヤー(`@layer`)、CSS変数、レイアウト計算
+  (flexbox/grid)、深い位置での`+`/`~`結合子(上記参照)。
+- **検証**: `cargo test`で32件全green(既存27件+一般兄弟結合子の
+  パース2件・マッチング3件)。警告0件。依存先の`RBootStrap`
+  (22件、無変更)・`RReact`(`dom_bridge`フィーチャ有効時16件、
+  無効時10件、無変更)も影響なし(`Combinator`を網羅的にmatchしておらず
+  構築のみのため)を確認済み。
 
 ## 次にすべきこと
 
 1. 「RHTML5+RCSS3を使った最小のPoem SSRエンドポイント」マイルストーン
    (`rhtml5`側CLAUDE.md参照)
 2. `@media`等のat-rule、`!important`
-3. 一般兄弟結合子(`~`)対応
-4. 深い位置での`+`結合子対応(祖先の兄弟情報を渡せるAPI設計の検討)
+3. 深い位置での`+`/`~`結合子対応(祖先の兄弟情報を渡せるAPI設計の検討)
 
 ## 関連プロジェクト
 
@@ -73,6 +85,16 @@
 - [open-raid-z](https://github.com/aon-co-jp/open-raid-z) — 開発ルールの正本
 
 ## HANDOFF
+
+- **2026-07-19 一般兄弟結合子(`~`)対応**: `Combinator::GeneralSibling`
+  追加、`parse_selector`が`~`を認識、`matches_selector`は
+  `preceding_siblings`を全件スキャンして「直前でなくてもよい」
+  マッチングを実装(`+`との違い)。深い位置での`~`は`+`と同じ理由で
+  スコープ外(安全側に倒して不一致)。テスト27件→32件(全green、
+  警告0件)。`RBootStrap`/`RReact`は`Combinator`を網羅的にmatchして
+  いないため無変更・影響なし(両クレートとも既存テスト数のまま
+  green確認済み)。次にすべきこと: `@media`/`!important`対応、
+  深い位置での`+`/`~`結合子対応(API設計の見直しが必要)。
 
 - **2026-07-18 子孫結合子(スペース区切りセレクタ)対応**: `Selector`
   型(`Vec<CompoundSelector>`)・`parse_selector`・`selector_specificity`・
