@@ -1,0 +1,13 @@
+[package]
+name = "rcss3"
+description = "RCSS3: a from-scratch Rust CSS3 parser/cascade/style-computation engine, DOM-implementation-agnostic (matches elements via a small trait), designed to pair with rhtml5 for Poem-based SSR."
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "Apache-2.0 OR MIT"
+repository = "https://github.com/aon-co-jp/rcss3"
+
+[lints.rust]
+unsafe_code = "deny"
+
+[dependencies]
