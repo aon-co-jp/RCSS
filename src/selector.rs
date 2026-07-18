@@ -1,9 +1,9 @@
-//! セレクタとその優先度(specificity)計算。第一段では**単純セレクタの
-//! 組み合わせのみ**を対象とする(`div.foo#bar`のようなタグ名/クラス/ID
-//! の組み合わせ)。子孫結合子(スペース)・子結合子(`>`)・隣接兄弟結合子
-//! (`+`)等のコンビネータは次段階の課題として明記(`cssparser`が
-//! `Parser<'i,'t>`でライフタイム分離するのと同様、複雑な結合子は
-//! 一からスコープを広げていく設計)。
+//! セレクタとその優先度(specificity)計算。単純セレクタの組み合わせ
+//! (`div.foo#bar`のようなタグ名/クラス/IDの組み合わせ)に加え、
+//! **子孫結合子(スペース区切り、例: `div p`)**を対応する(2026-07-18
+//! 追加)。子結合子(`>`)・隣接兄弟結合子(`+`)・一般兄弟結合子(`~`)は
+//! 次段階の課題として明記(`cssparser`が`Parser<'i,'t>`でライフタイム
+//! 分離するのと同様、複雑な結合子は一からスコープを広げていく設計)。
 
 /// コンパウンドセレクタを構成する単純セレクタの一部品。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -108,6 +108,62 @@ pub fn parse_compound_selector(input: &str) -> Option<CompoundSelector> {
     }
 }
 
+/// スペース区切りのコンパウンドセレクタ列(子孫結合子)。
+/// 例: `div p.foo` は`[Tag(div), [Tag(p), Class(foo)]]`のように、
+/// 左から右へ祖先→子孫の順で並ぶ。最後の要素がマッチ対象の要素
+/// そのものに対する条件、それより前の要素は祖先のどこかに存在すべき
+/// 条件を表す(`matches_selector`参照)。
+pub type Selector = Vec<CompoundSelector>;
+
+/// カンマを含まない1つのセレクタ文字列(空白区切りの子孫結合子を含む
+/// 場合がある)をパースする。
+pub fn parse_selector(input: &str) -> Option<Selector> {
+    let compounds: Vec<CompoundSelector> =
+        input.split_whitespace().filter_map(parse_compound_selector).collect();
+    if compounds.is_empty() {
+        None
+    } else {
+        Some(compounds)
+    }
+}
+
+/// `Selector`(子孫結合子を含みうる)のspecificityは、構成する各
+/// コンパウンドセレクタのspecificityの合計(CSS仕様通り)。
+pub fn selector_specificity(selector: &Selector) -> (u32, u32, u32) {
+    selector.iter().fold((0, 0, 0), |(ai, ac, at), compound| {
+        let (id, class, tag) = specificity(compound);
+        (ai + id, ac + class, at + tag)
+    })
+}
+
+/// `Selector`が要素`el`にマッチするかを判定する。`ancestors`は
+/// 直近の親から順にルートに向かう祖先の並び(`ancestors[0]`が親)。
+/// 子孫結合子は「直接の親である必要はなく、祖先のどこかに一致する
+/// 要素が(セレクタの並び順を保って)存在すればよい」というCSSの
+/// セマンティクスを、右から左へ祖先チェーンを消費する形で実装する。
+pub fn matches_selector<E: ElementLike + ?Sized>(selector: &Selector, el: &E, ancestors: &[&E]) -> bool {
+    let Some((target, ancestor_selectors)) = selector.split_last() else {
+        return false;
+    };
+    if !matches(target, el) {
+        return false;
+    }
+
+    let mut remaining = ancestor_selectors;
+    let mut chain_start = 0usize;
+    while let Some((needle, rest)) = remaining.split_last() {
+        let found = ancestors[chain_start.min(ancestors.len())..].iter().position(|a| matches(needle, *a));
+        match found {
+            Some(offset) => {
+                chain_start += offset + 1;
+                remaining = rest;
+            }
+            None => return false,
+        }
+    }
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -166,5 +222,48 @@ mod tests {
         let tag_sel = parse_compound_selector("div").unwrap();
         assert!(specificity(&id_sel) > specificity(&class_sel));
         assert!(specificity(&class_sel) > specificity(&tag_sel));
+    }
+
+    #[test]
+    fn parses_descendant_combinator_selector() {
+        assert_eq!(
+            parse_selector("div p.foo"),
+            Some(vec![
+                vec![SimplePart::Tag("div".to_string())],
+                vec![SimplePart::Tag("p".to_string()), SimplePart::Class("foo".to_string())],
+            ])
+        );
+    }
+
+    #[test]
+    fn descendant_combinator_matches_indirect_ancestor() {
+        let root = FakeElement { tag: "div", classes: vec![], id: None };
+        let middle = FakeElement { tag: "section", classes: vec![], id: None };
+        let target = FakeElement { tag: "p", classes: vec![], id: None };
+        let selector = parse_selector("div p").unwrap();
+        // ancestors[0] = immediate parent, ancestors[1] = grandparent, etc.
+        assert!(matches_selector(&selector, &target, &[&middle, &root]));
+    }
+
+    #[test]
+    fn descendant_combinator_rejects_when_ancestor_missing() {
+        let middle = FakeElement { tag: "section", classes: vec![], id: None };
+        let target = FakeElement { tag: "p", classes: vec![], id: None };
+        let selector = parse_selector("div p").unwrap();
+        assert!(!matches_selector(&selector, &target, &[&middle]));
+    }
+
+    #[test]
+    fn descendant_combinator_requires_selector_order_to_be_preserved() {
+        // "div p" が祖先チェーンに`div`と`p`両方あっても、順序が
+        // 逆(先祖側にpがあり、divがそれより内側)なら一致しない。
+        let outer_p = FakeElement { tag: "p", classes: vec![], id: None };
+        let inner_div = FakeElement { tag: "div", classes: vec![], id: None };
+        let target = FakeElement { tag: "span", classes: vec![], id: None };
+        let selector = parse_selector("div p span").unwrap();
+        // ancestors[0] = immediate parent(inner_div), ancestors[1] = outer_p
+        // "p" (2番目のセレクタ)を探すが、inner_divの外側(outer_p)にしか
+        // 存在せず、その後ろに"div"を探しても見つからないので不一致。
+        assert!(!matches_selector(&selector, &target, &[&inner_div, &outer_p]));
     }
 }

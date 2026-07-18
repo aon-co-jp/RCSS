@@ -24,28 +24,52 @@
   宣言(`property: value;`)パースの逐次スキャナ。カンマ区切りの
   複数セレクタ対応。
 - `src/cascade.rs`: マッチする全ルールを(specificity, ソース順)で
-  昇順ソートし、宣言を順に適用(後勝ち)する`compute_style()`。
-  `style_to_string()`でHTML `style`属性用の文字列に変換。
-- **未対応(次段階)**: 子孫/子/隣接兄弟結合子、`@media`等のat-rule、
-  `!important`、カスケードレイヤー(`@layer`)、CSS変数、
-  レイアウト計算(flexbox/grid)。
-- **検証**: `cargo test`で13件全green(セレクタパース4件・
-  スタイルシートパース4件・カスケード5件、specificityの優先順位・
-  同点時の後勝ち・複数ルールのプロパティ統合を含む)。警告0件。
+  昇順ソートし、宣言を順に適用(後勝ち)する`compute_style()`
+  (2026-07-18: 第3引数に祖先チェーン`ancestors: &[&E]`を追加、
+  子孫結合子のマッチングに使う)。`style_to_string()`でHTML `style`
+  属性用の文字列に変換。
+- `src/selector.rs`(2026-07-18更新): **子孫結合子(スペース区切り、
+  例: `div p`)対応**。`Selector = Vec<CompoundSelector>`型、
+  `parse_selector()`・`selector_specificity()`(各コンパウンドの
+  specificityの合計)・`matches_selector()`(祖先チェーンを右から左へ
+  消費して判定)を追加。
+- **未対応(次段階)**: 子結合子(`>`)・隣接兄弟結合子(`+`)・一般兄弟
+  結合子(`~`)、`@media`等のat-rule、`!important`、カスケードレイヤー
+  (`@layer`)、CSS変数、レイアウト計算(flexbox/grid)。
+- **検証**: `cargo test`で20件全green(セレクタパース4件+子孫結合子3件・
+  スタイルシートパース4件+子孫結合子1件・カスケード5件+子孫結合子2件、
+  specificityの優先順位・同点時の後勝ち・複数ルールのプロパティ統合・
+  子孫結合子の間接祖先マッチ/不一致/順序保持を含む)。警告0件。
 
 ## 次にすべきこと
 
-1. `rhtml5::Element`が`rcss3::ElementLike`を実装する薄いアダプタ
-   (どちらのクレートにも新規の相互依存を追加しない形——利用側の
-   クレート、またはこのアダプタ専用の第三のクレートで実装するのが
-   cssparser/htm5everの実例に近い)
+1. 子結合子(`>`)・隣接兄弟結合子(`+`)対応
 2. 「RHTML5+RCSS3を使った最小のPoem SSRエンドポイント」マイルストーン
    (`rhtml5`側CLAUDE.md参照)
-3. 子孫結合子(スペース)の対応(コンビネータ全体のうち最優先で
-   よく使われるもの)
+3. `@media`等のat-rule、`!important`
 
 ## 関連プロジェクト
 
 - [rhtml5](https://github.com/aon-co-jp/rhtml5) — 対になるDOM実装、
   全体構想の詳細はこちらに集約
+- [rreact](https://github.com/aon-co-jp/RReact) — `dom_bridge`
+  フィーチャで`rhtml5::Element`が`rcss3::ElementLike`を実装するアダプタ
+  (`ElementRef`)を提供し、RHTML→RCSS→RReactのEnd-to-Endパイプラインを
+  実装済み(2026-07-18、詳細はRReact側CLAUDE.md参照)
 - [open-raid-z](https://github.com/aon-co-jp/open-raid-z) — 開発ルールの正本
+
+## HANDOFF
+
+- **2026-07-18 子孫結合子(スペース区切りセレクタ)対応**: `Selector`
+  型(`Vec<CompoundSelector>`)・`parse_selector`・`selector_specificity`・
+  `matches_selector`(祖先チェーンを右から左へ消費するアルゴリズム)を
+  追加。`Rule.selectors`の型を`Vec<CompoundSelector>`から
+  `Vec<Selector>`へ変更(破壊的変更、`parser.rs`/`cascade.rs`両方を
+  追従修正)。`compute_style`に祖先チェーン引数を追加(既存呼び出しは
+  `&[]`で後方互換)。テストは13件→20件(全green、警告0件)。
+  併せて、次のステップとして明記されていた「`rhtml5::Element`への
+  `ElementLike`アダプタ」は、orphan ruleの制約により本クレートではなく
+  `rreact`クレート側の`dom_bridge`フィーチャで実装した(利用側クレートで
+  実装する、という本ファイルの元々の方針通り)。
+  次にすべきこと: 子結合子(`>`)・隣接兄弟結合子(`+`)対応、
+  `@media`/`!important`対応。

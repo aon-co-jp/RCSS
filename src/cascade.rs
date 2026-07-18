@@ -7,18 +7,23 @@
 use std::collections::BTreeMap;
 
 use crate::parser::Rule;
-use crate::selector::{matches, specificity, ElementLike};
+use crate::selector::{matches_selector, selector_specificity, ElementLike};
 
 /// 計算済みスタイル(プロパティ名→値)。`BTreeMap`を使うことで
 /// `style_to_string`の出力順が決定的になる(テスト・SSR出力の
 /// 再現性のため)。
 pub type ComputedStyle = BTreeMap<String, String>;
 
-pub fn compute_style<E: ElementLike + ?Sized>(stylesheet: &[Rule], el: &E) -> ComputedStyle {
+/// `el`に対する計算済みスタイルを求める。`ancestors`は子孫結合子の
+/// マッチングに使う祖先チェーン(`ancestors[0]`が直近の親、以降ルート
+/// 方向へ向かう)。祖先を辿らないシンプルなセレクタしか使わない場合は
+/// `&[]`を渡せばよい。
+pub fn compute_style<E: ElementLike + ?Sized>(stylesheet: &[Rule], el: &E, ancestors: &[&E]) -> ComputedStyle {
     let mut matched: Vec<(u32, u32, u32, usize, &Vec<crate::parser::Declaration>)> = Vec::new();
 
     for (index, rule) in stylesheet.iter().enumerate() {
-        let best = rule.selectors.iter().filter(|sel| matches(sel, el)).map(specificity).max();
+        let best =
+            rule.selectors.iter().filter(|sel| matches_selector(sel, el, ancestors)).map(selector_specificity).max();
         if let Some((ids, classes, tags)) = best {
             matched.push((ids, classes, tags, index, &rule.declarations));
         }
@@ -73,7 +78,7 @@ mod tests {
         let css = "#x { color: blue; } div { color: red; }";
         let rules = parse_stylesheet(css);
         let el = FakeElement { tag: "div", classes: vec![], id: Some("x") };
-        let style = compute_style(&rules, &el);
+        let style = compute_style(&rules, &el, &[]);
         assert_eq!(style.get("color"), Some(&"blue".to_string()));
     }
 
@@ -82,7 +87,7 @@ mod tests {
         let css = ".a { color: red; } .b { color: blue; }";
         let rules = parse_stylesheet(css);
         let el = FakeElement { tag: "div", classes: vec!["a", "b"], id: None };
-        let style = compute_style(&rules, &el);
+        let style = compute_style(&rules, &el, &[]);
         assert_eq!(style.get("color"), Some(&"blue".to_string()));
     }
 
@@ -91,7 +96,7 @@ mod tests {
         let css = "span { color: red; }";
         let rules = parse_stylesheet(css);
         let el = FakeElement { tag: "div", classes: vec![], id: None };
-        let style = compute_style(&rules, &el);
+        let style = compute_style(&rules, &el, &[]);
         assert!(style.is_empty());
     }
 
@@ -100,7 +105,7 @@ mod tests {
         let css = "div { color: red; } .foo { font-size: 12px; }";
         let rules = parse_stylesheet(css);
         let el = FakeElement { tag: "div", classes: vec!["foo"], id: None };
-        let style = compute_style(&rules, &el);
+        let style = compute_style(&rules, &el, &[]);
         assert_eq!(style.get("color"), Some(&"red".to_string()));
         assert_eq!(style.get("font-size"), Some(&"12px".to_string()));
     }
@@ -111,5 +116,25 @@ mod tests {
         style.insert("color".to_string(), "red".to_string());
         style.insert("font-size".to_string(), "12px".to_string());
         assert_eq!(style_to_string(&style), "color: red; font-size: 12px;");
+    }
+
+    #[test]
+    fn descendant_combinator_matches_through_ancestor_chain() {
+        let css = "div p { color: green; }";
+        let rules = parse_stylesheet(css);
+        let ancestor = FakeElement { tag: "div", classes: vec![], id: None };
+        let el = FakeElement { tag: "p", classes: vec![], id: None };
+        let style = compute_style(&rules, &el, &[&ancestor]);
+        assert_eq!(style.get("color"), Some(&"green".to_string()));
+    }
+
+    #[test]
+    fn descendant_combinator_does_not_match_without_matching_ancestor() {
+        let css = "div p { color: green; }";
+        let rules = parse_stylesheet(css);
+        let ancestor = FakeElement { tag: "section", classes: vec![], id: None };
+        let el = FakeElement { tag: "p", classes: vec![], id: None };
+        let style = compute_style(&rules, &el, &[&ancestor]);
+        assert!(style.is_empty());
     }
 }

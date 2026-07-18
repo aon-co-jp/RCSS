@@ -15,9 +15,11 @@ impl ElementLike for MyElement {
     fn id(&self) -> Option<&str> { self.id.as_deref() }
 }
 
-let rules = parse_stylesheet("p { color: red; } .highlight { font-weight: bold; }");
+let rules = parse_stylesheet("p { color: red; } .highlight { font-weight: bold; } div p { color: blue; }");
 let el = MyElement { tag: "p".into(), classes: vec!["highlight".into()], id: None };
-let style = compute_style(&rules, &el);
+// 第3引数は祖先チェーン(直近の親から順に)。子孫結合子(`div p`)を
+// 使わないなら`&[]`でよい。
+let style = compute_style(&rules, &el, &[]);
 println!("{}", style_to_string(&style)); // "color: red; font-weight: bold;"
 ```
 

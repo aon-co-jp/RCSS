@@ -8,7 +8,7 @@
 //! (`--foo`/`var()`)、文字列内のリテラル`{`/`}`/`;`(例:
 //! `content: "a;b"`)のエスケープ処理。
 
-use crate::selector::{parse_compound_selector, CompoundSelector};
+use crate::selector::{parse_selector, Selector};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Declaration {
@@ -22,7 +22,7 @@ pub struct Rule {
     /// なく、1つの`Rule`が複数の`selectors`を持つ形で表現する
     /// (CSSの実際のセマンティクスに合わせる: `h1, h2 { color: red }`は
     /// 1つの宣言ブロックが2つのセレクタにマッチする)。
-    pub selectors: Vec<CompoundSelector>,
+    pub selectors: Vec<Selector>,
     pub declarations: Vec<Declaration>,
 }
 
@@ -64,8 +64,8 @@ fn parse_declarations(block: &str) -> Vec<Declaration> {
         .collect()
 }
 
-fn parse_selector_list(selector_text: &str) -> Vec<CompoundSelector> {
-    selector_text.split(',').filter_map(|s| parse_compound_selector(s.trim())).collect()
+fn parse_selector_list(selector_text: &str) -> Vec<Selector> {
+    selector_text.split(',').filter_map(|s| parse_selector(s.trim())).collect()
 }
 
 /// スタイルシート文字列全体をパースし、出現順を保った`Rule`列を返す
@@ -102,7 +102,7 @@ mod tests {
     fn parses_a_single_rule_with_multiple_declarations() {
         let rules = parse_stylesheet("p { color: red; font-size: 12px; }");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].selectors, vec![vec![SimplePart::Tag("p".to_string())]]);
+        assert_eq!(rules[0].selectors, vec![vec![vec![SimplePart::Tag("p".to_string())]]]);
         assert_eq!(
             rules[0].declarations,
             vec![
@@ -130,7 +130,17 @@ mod tests {
     fn multiple_rules_are_parsed_in_source_order() {
         let rules = parse_stylesheet("p { color: red; } .foo { color: blue; }");
         assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].selectors[0], vec![SimplePart::Tag("p".to_string())]);
-        assert_eq!(rules[1].selectors[0], vec![SimplePart::Class("foo".to_string())]);
+        assert_eq!(rules[0].selectors[0], vec![vec![SimplePart::Tag("p".to_string())]]);
+        assert_eq!(rules[1].selectors[0], vec![vec![SimplePart::Class("foo".to_string())]]);
+    }
+
+    #[test]
+    fn parses_descendant_combinator_in_stylesheet() {
+        let rules = parse_stylesheet("div p { color: red; }");
+        assert_eq!(rules.len(), 1);
+        assert_eq!(
+            rules[0].selectors[0],
+            vec![vec![SimplePart::Tag("div".to_string())], vec![SimplePart::Tag("p".to_string())]]
+        );
     }
 }
