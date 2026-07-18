@@ -14,16 +14,27 @@ use crate::selector::{matches_selector, selector_specificity, ElementLike};
 /// 再現性のため)。
 pub type ComputedStyle = BTreeMap<String, String>;
 
-/// `el`に対する計算済みスタイルを求める。`ancestors`は子孫結合子の
-/// マッチングに使う祖先チェーン(`ancestors[0]`が直近の親、以降ルート
-/// 方向へ向かう)。祖先を辿らないシンプルなセレクタしか使わない場合は
-/// `&[]`を渡せばよい。
-pub fn compute_style<E: ElementLike + ?Sized>(stylesheet: &[Rule], el: &E, ancestors: &[&E]) -> ComputedStyle {
+/// `el`に対する計算済みスタイルを求める。`ancestors`は子孫結合子・
+/// 子結合子のマッチングに使う祖先チェーン(`ancestors[0]`が直近の親、
+/// 以降ルート方向へ向かう)。`preceding_siblings`は隣接兄弟結合子
+/// (`+`)のマッチングに使う直前の兄弟列(`preceding_siblings[0]`が
+/// 直前の兄弟)。祖先・兄弟のいずれも辿らないシンプルなセレクタしか
+/// 使わない場合はどちらも`&[]`を渡せばよい。
+pub fn compute_style<E: ElementLike + ?Sized>(
+    stylesheet: &[Rule],
+    el: &E,
+    ancestors: &[&E],
+    preceding_siblings: &[&E],
+) -> ComputedStyle {
     let mut matched: Vec<(u32, u32, u32, usize, &Vec<crate::parser::Declaration>)> = Vec::new();
 
     for (index, rule) in stylesheet.iter().enumerate() {
-        let best =
-            rule.selectors.iter().filter(|sel| matches_selector(sel, el, ancestors)).map(selector_specificity).max();
+        let best = rule
+            .selectors
+            .iter()
+            .filter(|sel| matches_selector(sel, el, ancestors, preceding_siblings))
+            .map(selector_specificity)
+            .max();
         if let Some((ids, classes, tags)) = best {
             matched.push((ids, classes, tags, index, &rule.declarations));
         }
@@ -78,7 +89,7 @@ mod tests {
         let css = "#x { color: blue; } div { color: red; }";
         let rules = parse_stylesheet(css);
         let el = FakeElement { tag: "div", classes: vec![], id: Some("x") };
-        let style = compute_style(&rules, &el, &[]);
+        let style = compute_style(&rules, &el, &[], &[]);
         assert_eq!(style.get("color"), Some(&"blue".to_string()));
     }
 
@@ -87,7 +98,7 @@ mod tests {
         let css = ".a { color: red; } .b { color: blue; }";
         let rules = parse_stylesheet(css);
         let el = FakeElement { tag: "div", classes: vec!["a", "b"], id: None };
-        let style = compute_style(&rules, &el, &[]);
+        let style = compute_style(&rules, &el, &[], &[]);
         assert_eq!(style.get("color"), Some(&"blue".to_string()));
     }
 
@@ -96,7 +107,7 @@ mod tests {
         let css = "span { color: red; }";
         let rules = parse_stylesheet(css);
         let el = FakeElement { tag: "div", classes: vec![], id: None };
-        let style = compute_style(&rules, &el, &[]);
+        let style = compute_style(&rules, &el, &[], &[]);
         assert!(style.is_empty());
     }
 
@@ -105,7 +116,7 @@ mod tests {
         let css = "div { color: red; } .foo { font-size: 12px; }";
         let rules = parse_stylesheet(css);
         let el = FakeElement { tag: "div", classes: vec!["foo"], id: None };
-        let style = compute_style(&rules, &el, &[]);
+        let style = compute_style(&rules, &el, &[], &[]);
         assert_eq!(style.get("color"), Some(&"red".to_string()));
         assert_eq!(style.get("font-size"), Some(&"12px".to_string()));
     }
@@ -124,7 +135,7 @@ mod tests {
         let rules = parse_stylesheet(css);
         let ancestor = FakeElement { tag: "div", classes: vec![], id: None };
         let el = FakeElement { tag: "p", classes: vec![], id: None };
-        let style = compute_style(&rules, &el, &[&ancestor]);
+        let style = compute_style(&rules, &el, &[&ancestor], &[]);
         assert_eq!(style.get("color"), Some(&"green".to_string()));
     }
 
@@ -134,7 +145,36 @@ mod tests {
         let rules = parse_stylesheet(css);
         let ancestor = FakeElement { tag: "section", classes: vec![], id: None };
         let el = FakeElement { tag: "p", classes: vec![], id: None };
-        let style = compute_style(&rules, &el, &[&ancestor]);
+        let style = compute_style(&rules, &el, &[&ancestor], &[]);
         assert!(style.is_empty());
+    }
+
+    #[test]
+    fn child_combinator_only_matches_the_immediate_parent() {
+        let css = "div > p { color: purple; }";
+        let rules = parse_stylesheet(css);
+        let parent = FakeElement { tag: "div", classes: vec![], id: None };
+        let el = FakeElement { tag: "p", classes: vec![], id: None };
+        let style = compute_style(&rules, &el, &[&parent], &[]);
+        assert_eq!(style.get("color"), Some(&"purple".to_string()));
+
+        // grandparentがdivでも、直接の親(section)は`>`条件を満たさない。
+        let grandparent = FakeElement { tag: "div", classes: vec![], id: None };
+        let non_matching_parent = FakeElement { tag: "section", classes: vec![], id: None };
+        let style2 = compute_style(&rules, &el, &[&non_matching_parent, &grandparent], &[]);
+        assert!(style2.is_empty());
+    }
+
+    #[test]
+    fn adjacent_sibling_combinator_only_matches_the_immediately_preceding_sibling() {
+        let css = "li + li { color: orange; }";
+        let rules = parse_stylesheet(css);
+        let preceding = FakeElement { tag: "li", classes: vec![], id: None };
+        let el = FakeElement { tag: "li", classes: vec![], id: None };
+        let style = compute_style(&rules, &el, &[], &[&preceding]);
+        assert_eq!(style.get("color"), Some(&"orange".to_string()));
+
+        let style_no_sibling = compute_style(&rules, &el, &[], &[]);
+        assert!(style_no_sibling.is_empty());
     }
 }

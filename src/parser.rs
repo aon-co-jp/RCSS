@@ -96,13 +96,17 @@ pub fn parse_stylesheet(css: &str) -> Vec<Rule> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::selector::SimplePart;
+    use crate::selector::{Combinator, SelectorSegment, SimplePart};
+
+    fn descendant(parts: Vec<SimplePart>) -> SelectorSegment {
+        SelectorSegment { combinator: Combinator::Descendant, compound: parts }
+    }
 
     #[test]
     fn parses_a_single_rule_with_multiple_declarations() {
         let rules = parse_stylesheet("p { color: red; font-size: 12px; }");
         assert_eq!(rules.len(), 1);
-        assert_eq!(rules[0].selectors, vec![vec![vec![SimplePart::Tag("p".to_string())]]]);
+        assert_eq!(rules[0].selectors, vec![vec![descendant(vec![SimplePart::Tag("p".to_string())])]]);
         assert_eq!(
             rules[0].declarations,
             vec![
@@ -130,8 +134,8 @@ mod tests {
     fn multiple_rules_are_parsed_in_source_order() {
         let rules = parse_stylesheet("p { color: red; } .foo { color: blue; }");
         assert_eq!(rules.len(), 2);
-        assert_eq!(rules[0].selectors[0], vec![vec![SimplePart::Tag("p".to_string())]]);
-        assert_eq!(rules[1].selectors[0], vec![vec![SimplePart::Class("foo".to_string())]]);
+        assert_eq!(rules[0].selectors[0], vec![descendant(vec![SimplePart::Tag("p".to_string())])]);
+        assert_eq!(rules[1].selectors[0], vec![descendant(vec![SimplePart::Class("foo".to_string())])]);
     }
 
     #[test]
@@ -140,7 +144,33 @@ mod tests {
         assert_eq!(rules.len(), 1);
         assert_eq!(
             rules[0].selectors[0],
-            vec![vec![SimplePart::Tag("div".to_string())], vec![SimplePart::Tag("p".to_string())]]
+            vec![
+                descendant(vec![SimplePart::Tag("div".to_string())]),
+                descendant(vec![SimplePart::Tag("p".to_string())]),
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_child_and_adjacent_sibling_combinators_in_stylesheet() {
+        let rules = parse_stylesheet("div > p { color: red; } li + li { color: blue; }");
+        assert_eq!(rules.len(), 2);
+        assert_eq!(
+            rules[0].selectors[0],
+            vec![
+                descendant(vec![SimplePart::Tag("div".to_string())]),
+                SelectorSegment { combinator: Combinator::Child, compound: vec![SimplePart::Tag("p".to_string())] },
+            ]
+        );
+        assert_eq!(
+            rules[1].selectors[0],
+            vec![
+                descendant(vec![SimplePart::Tag("li".to_string())]),
+                SelectorSegment {
+                    combinator: Combinator::AdjacentSibling,
+                    compound: vec![SimplePart::Tag("li".to_string())],
+                },
+            ]
         );
     }
 }

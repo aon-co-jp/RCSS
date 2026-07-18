@@ -33,20 +33,34 @@
   `parse_selector()`・`selector_specificity()`(各コンパウンドの
   specificityの合計)・`matches_selector()`(祖先チェーンを右から左へ
   消費して判定)を追加。
-- **未対応(次段階)**: 子結合子(`>`)・隣接兄弟結合子(`+`)・一般兄弟
-  結合子(`~`)、`@media`等のat-rule、`!important`、カスケードレイヤー
-  (`@layer`)、CSS変数、レイアウト計算(flexbox/grid)。
-- **検証**: `cargo test`で20件全green(セレクタパース4件+子孫結合子3件・
-  スタイルシートパース4件+子孫結合子1件・カスケード5件+子孫結合子2件、
-  specificityの優先順位・同点時の後勝ち・複数ルールのプロパティ統合・
-  子孫結合子の間接祖先マッチ/不一致/順序保持を含む)。警告0件。
+- **2026-07-18追記: 子結合子(`>`)・隣接兄弟結合子(`+`)対応完了**。
+  `Selector`型を`Vec<CompoundSelector>`から`Vec<SelectorSegment>`
+  (各segmentが「1つ左隣とどう関係するか」を表す`Combinator`
+  (`Descendant`/`Child`/`AdjacentSibling`)を保持)へ変更(破壊的変更、
+  依存クレート`RReact`/`RBootStrap`も追従修正済み)。`parse_selector`は
+  `>`/`+`の前後にスペースが無い表記(`div>p`)にも対応。
+  `matches_selector`/`compute_style`に`preceding_siblings`引数を追加
+  (`+`のマッチングに使う、直前の兄弟から順に並べた配列)。
+  **正直なスコープの限界**: `+`はセレクタの最も右側の結合でのみ判定
+  可能(例: `li + li`)。`div + p span`のように`+`がそれより左側
+  (祖先チェーン側)に現れる場合、祖先の兄弟情報がそもそも呼び出し側
+  から渡されないため判定不能——安全側に倒して常に不一致を返す
+  (`selector.rs`冒頭コメント参照)。一般兄弟結合子(`~`)は未対応のまま。
+- **未対応(次段階)**: 一般兄弟結合子(`~`)、`@media`等のat-rule、
+  `!important`、カスケードレイヤー(`@layer`)、CSS変数、
+  レイアウト計算(flexbox/grid)、深い位置での`+`結合子(上記参照)。
+- **検証**: `cargo test`で27件全green(既存20件+子/隣接兄弟結合子の
+  パース2件・マッチング4件・スコープ限界の安全策1件)。警告0件。
+  依存先の`RBootStrap`(22件)・`RReact`(`dom_bridge`フィーチャ有効時
+  16件、無効時10件)もこの変更に追従して全green確認済み。
 
 ## 次にすべきこと
 
-1. 子結合子(`>`)・隣接兄弟結合子(`+`)対応
-2. 「RHTML5+RCSS3を使った最小のPoem SSRエンドポイント」マイルストーン
+1. 「RHTML5+RCSS3を使った最小のPoem SSRエンドポイント」マイルストーン
    (`rhtml5`側CLAUDE.md参照)
-3. `@media`等のat-rule、`!important`
+2. `@media`等のat-rule、`!important`
+3. 一般兄弟結合子(`~`)対応
+4. 深い位置での`+`結合子対応(祖先の兄弟情報を渡せるAPI設計の検討)
 
 ## 関連プロジェクト
 

@@ -17,6 +17,6 @@ pub mod selector;
 pub use cascade::{compute_style, style_to_string, ComputedStyle};
 pub use parser::{parse_stylesheet, Declaration, Rule};
 pub use selector::{
-    matches, matches_selector, parse_selector, selector_specificity, specificity, CompoundSelector, ElementLike,
-    Selector, SimplePart,
+    matches, matches_selector, parse_selector, selector_specificity, specificity, Combinator, CompoundSelector,
+    ElementLike, Selector, SelectorSegment, SimplePart,
 };
