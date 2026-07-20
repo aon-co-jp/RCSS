@@ -86,6 +86,29 @@
 
 ## HANDOFF
 
+- **2026-07-19(続き) `!important`/`@media`をcompute_styleへ実配線
+  (未完成の発見と修正)**: `audiocafe-tokyo-rust`ユーザーからの
+  エコシステム完成度向上要望を受けて監査したところ、2つの問題が
+  見つかった。(1) 前回セッションが`!important`/`@media`のパーサー・
+  データモデル(`src/media.rs`新設・`parser.rs`更新・`lib.rs`の
+  re-export)を完成させていたにもかかわらず、**一度もコミット・push
+  されていなかった**(このファイルの「未対応」記載もそのため古いままに
+  なっていた)。(2) さらに、そのデータモデル自体は完成していても、
+  実際にスタイルを計算する`cascade::compute_style`が
+  `Declaration.important`/`Rule.media`を一切参照しておらず、
+  パースはされるが計算結果に何の影響も与えない「配線されていない」
+  状態だった。両方を修正: `compute_style`に2パス適用
+  (非important→important)による優先順位と、`MediaContext::default()`
+  (screen・1920px)に対する`@media`フィルタリングを実装。新規テスト
+  6件追加、既存分と合わせ42件全green・警告0件。依存クレート
+  `RBootStrap`は`Declaration`/`Rule`の新フィールドに追従しておらず
+  ビルドが壊れていたため、`important: false`/`media: None`を追加して
+  修正した(RBootStrap側CLAUDE.md参照)。`RReact`の`compute_style`
+  呼び出し(`dom_bridge.rs`)はシグネチャ変更が無いため無修正で
+  ビルド・テストとも影響なしを確認済み。
+  次にすべきこと: 深い位置での`+`/`~`結合子対応、カスケードレイヤー
+  (`@layer`)、CSS変数、レイアウト計算(flexbox/grid)。
+
 - **2026-07-19 一般兄弟結合子(`~`)対応**: `Combinator::GeneralSibling`
   追加、`parse_selector`が`~`を認識、`matches_selector`は
   `preceding_siblings`を全件スキャンして「直前でなくてもよい」
